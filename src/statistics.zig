@@ -641,7 +641,9 @@ fn getLinesChanged(
     }.compareFn) = .empty;
     defer q.deinit(allocator);
     for (self.repositories) |*repo| {
-        if (repo.lines_changed > 0) {
+        // The first metadata-only request was already made while discovering
+        // the repository. Never retry or clone private repositories.
+        if (repo.private or repo.lines_changed > 0) {
             continue;
         }
         try q.push(allocator, .{
