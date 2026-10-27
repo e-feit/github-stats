@@ -664,7 +664,7 @@ fn getLinesChanged(
             try io.sleep(.fromSeconds(delay), .real);
         }
         switch (try item.repo.fetchContributorStatistics(arena, client, self.user)) {
-            .ok => {},
+            .ok, .no_content => {},
             // If we're hitting rate limits on this API, just clone the repo
             // locally to compute lines changed
             // https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api?apiVersion=2026-03-10#rate-limit-errors
