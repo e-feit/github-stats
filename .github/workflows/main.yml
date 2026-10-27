@@ -2,7 +2,7 @@ name: Generate Stats Images
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   schedule:
     - cron: "5 0 * * *"
   workflow_dispatch:
@@ -10,46 +10,38 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: generate-stats
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    # Check out repository under $GITHUB_WORKSPACE, so the job can access it
-    - uses: actions/checkout@v6
-
-    # Use a supported Python release and cache pip dependencies.
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.11'
-        architecture: 'x64'
-        cache: 'pip'
-
-    # Install dependencies with `pip`
-    - name: Install requirements
-      run: |
-        python3 -m pip install --upgrade pip setuptools wheel
-        python3 -m pip install -r requirements.txt
-
-    # Generate all statistics images
-    - name: Generate images
-      run: |
-        python3 --version
-        python3 generate_images.py
-      env:
-        ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        EXCLUDED: ${{ secrets.EXCLUDED }}
-        EXCLUDED_LANGS: ${{ secrets.EXCLUDED_LANGS }}
-        EXCLUDE_FORKED_REPOS: true
-
-    # Commit all changed files to the repository
-    - name: Commit to the repo
-      run: |
-        git config --global user.name "jstrieb/github-stats"
-        git config --global user.email "github-stats[bot]@jstrieb.github.io"
-        git add .
-        # Force the build to succeed, even if no files were changed
-        git commit -m 'Update generated files' || true
-        git push
+      - uses: actions/checkout@v6
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.16.0
+      - name: Build and test
+        run: |
+          zig build
+          zig build test
+      - name: Generate images
+        run: ./zig-out/bin/github-stats
+        env:
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+          EXCLUDE_REPOS: ${{ secrets.EXCLUDED }}
+          EXCLUDE_LANGS: ${{ secrets.EXCLUDED_LANGS }}
+          OVERVIEW_OUTPUT_FILE: generated/overview.svg
+          LANGUAGES_OUTPUT_FILE: generated/languages.svg
+          SILENT: "true"
+          MAX_RETRIES: 5
+      - name: Commit generated images
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add generated/overview.svg generated/languages.svg
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update generated files'
+            git push
+          fi
