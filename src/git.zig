@@ -34,8 +34,6 @@ pub fn currentCommit(gpa: std.mem.Allocator, io: std.Io) ![]const u8 {
 pub fn getLinesChanged(
     gpa: std.mem.Allocator,
     io: std.Io,
-    login: []const u8,
-    token: []const u8,
     repo: []const u8,
     emails: []const []const u8,
 ) !u32 {
@@ -47,8 +45,8 @@ pub fn getLinesChanged(
     const repo_path = try std.mem.replaceOwned(u8, allocator, repo, "/", "_");
     const repo_url = try std.fmt.allocPrint(
         allocator,
-        "https://{s}:{s}@github.com/{s}.git",
-        .{ login, token, repo },
+        "https://github.com/{s}.git",
+        .{repo},
     );
     const clone = try std.process.run(allocator, io, .{
         .argv = &.{

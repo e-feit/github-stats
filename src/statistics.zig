@@ -14,6 +14,19 @@ review_contributions: u32 = 0,
 
 const Statistics = @This();
 
+fn includeRepository(name: []const u8, user: []const u8, private: bool, fork: bool) bool {
+    const separator = std.mem.indexOfScalar(u8, name, '/') orelse return false;
+    return !private and !fork and std.ascii.eqlIgnoreCase(name[0..separator], user);
+}
+
+test "only own public repositories that are not forks are included" {
+    try std.testing.expect(includeRepository("Alice/project", "alice", false, false));
+    try std.testing.expect(!includeRepository("Alice/private", "alice", true, false));
+    try std.testing.expect(!includeRepository("Alice/fork", "alice", false, true));
+    try std.testing.expect(!includeRepository("Bob/project", "alice", false, false));
+    try std.testing.expect(!includeRepository("alice", "alice", false, false));
+}
+
 const Repository = struct {
     name: []const u8,
     stars: u32,
@@ -381,8 +394,8 @@ fn getReposByYear(
 
     for (stats.commitContributionsByRepository) |x| {
         const raw_repo = x.repository;
-        // Preserve this repository's existing setting to exclude forked repos.
-        if (raw_repo.isFork) continue;
+        // Only collect statistics for the user's own public, non-fork repos.
+        if (!includeRepository(raw_repo.nameWithOwner, context.user, raw_repo.isPrivate, raw_repo.isFork)) continue;
         if (context.seen.get(raw_repo.nameWithOwner) orelse false) {
             std.log.debug(
                 "Skipping {s} (seen)",
@@ -623,8 +636,6 @@ fn getLinesChanged(
                         item.repo.lines_changed = git.getLinesChanged(
                             arena.allocator(),
                             io,
-                            self.user,
-                            client.token,
                             item.repo.name,
                             self.emails,
                         ) catch |e| switch (e) {
