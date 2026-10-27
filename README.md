@@ -9,7 +9,8 @@ repository statistics. Public and permitted private repositories are included.
 Private repositories are never cloned; if GitHub does not return contributor
 statistics, their changed-line counts may be incomplete. As in upstream, the overall contribution counts come from
 GitHub's user contribution collection and may include contributions outside
-those repositories. Only repositories with commit contributions are discovered.
+those repositories. Public repositories are discovered from commit contributions; private repositories
+are discovered directly from repository metadata.
 
 ## Setup
 

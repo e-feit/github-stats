@@ -45,7 +45,7 @@ const Repository = struct {
         }
     }
 
-    pub fn getLinesChanged(
+    pub fn fetchContributorStatistics(
         self: *@This(),
         arena: *std.heap.ArenaAllocator,
         client: *HttpClient,
@@ -243,16 +243,35 @@ fn getBasicInfo(client: *HttpClient, arena: *std.heap.ArenaAllocator) !struct {
     };
 }
 
-fn getReposByYear(
-    context: struct {
-        allocator: std.mem.Allocator,
-        arena: *std.heap.ArenaAllocator,
-        client: *HttpClient,
-        user: []const u8,
-        result: *Statistics,
-        seen: *std.StringHashMap(bool),
-        repositories: *std.ArrayList(Repository),
+const RepoContext = struct {
+    allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
+    client: *HttpClient,
+    user: []const u8,
+    result: *Statistics,
+    seen: *std.StringHashMap(bool),
+    repositories: *std.ArrayList(Repository),
+};
+
+const RawRepository = struct {
+    nameWithOwner: []const u8,
+    stargazerCount: u32,
+    forkCount: u32,
+    isPrivate: bool,
+    isFork: bool,
+    languages: ?struct {
+        edges: ?[]struct {
+            size: u32,
+            node: struct {
+                name: []const u8,
+                color: ?[]const u8,
+            },
+        },
     },
+};
+
+fn getReposByYear(
+    context: RepoContext,
     year: usize,
     start_month: usize,
     months: usize,
@@ -328,22 +347,7 @@ fn getReposByYear(
                 totalPullRequestContributions: u32,
                 totalPullRequestReviewContributions: u32,
                 commitContributionsByRepository: []struct {
-                    repository: struct {
-                        nameWithOwner: []const u8,
-                        stargazerCount: u32,
-                        forkCount: u32,
-                        isPrivate: bool,
-                        isFork: bool,
-                        languages: ?struct {
-                            edges: ?[]struct {
-                                size: u32,
-                                node: struct {
-                                    name: []const u8,
-                                    color: ?[]const u8,
-                                },
-                            },
-                        },
-                    },
+                    repository: RawRepository,
                 },
             },
         } } },
@@ -392,98 +396,136 @@ fn getReposByYear(
         stats.totalPullRequestReviewContributions;
 
     for (stats.commitContributionsByRepository) |x| {
-        const raw_repo = x.repository;
-        // Only collect statistics for the user's own non-fork repositories.
-        if (!includeRepository(raw_repo.nameWithOwner, context.user, raw_repo.isFork)) continue;
-        if (context.seen.get(raw_repo.nameWithOwner) orelse false) {
-            std.log.debug(
-                "Skipping {s} (seen)",
-                .{raw_repo.nameWithOwner},
-            );
-            continue;
-        }
-        var repository = Repository{
-            .name = try context.allocator.dupe(u8, raw_repo.nameWithOwner),
-            .stars = raw_repo.stargazerCount,
-            .forks = raw_repo.forkCount,
-            .private = raw_repo.isPrivate,
-            .languages = null,
-            .views = 0,
-            .lines_changed = 0,
-        };
-        errdefer repository.deinit(context.allocator);
-        if (raw_repo.languages) |repo_languages| {
-            if (repo_languages.edges) |raw_languages| {
-                repository.languages = try context.allocator.alloc(
-                    Language,
-                    raw_languages.len,
-                );
-                errdefer {
-                    context.allocator.free(repository.languages.?);
-                    repository.languages = null;
-                }
-                for (
-                    raw_languages,
-                    repository.languages.?,
-                    0..,
-                ) |raw, *language, i| {
-                    errdefer {
-                        for (0..i, repository.languages.?) |_, l| {
-                            context.allocator.free(l.name);
-                            if (l.color) |c| context.allocator.free(c);
-                        }
-                    }
-                    language.* = .{
-                        .name = try context.allocator.dupe(u8, raw.node.name),
-                        .size = raw.size,
-                    };
-                    errdefer context.allocator.free(language.name);
-                    if (raw.node.color) |color| {
-                        language.color = try context.allocator.dupe(u8, color);
-                    }
-                    errdefer if (language.color) |c| context.allocator.free(c);
-                }
-            }
-        }
+        try addRepository(context, x.repository);
+    }
+}
 
-        std.log.info(
-            "Getting views for {s}...",
+fn addRepository(context: RepoContext, raw_repo: RawRepository) !void {
+    // Only collect statistics for the user's own non-fork repositories.
+    if (!includeRepository(raw_repo.nameWithOwner, context.user, raw_repo.isFork)) return;
+    if (context.seen.get(raw_repo.nameWithOwner) orelse false) {
+        std.log.debug(
+            "Skipping {s} (seen)",
             .{raw_repo.nameWithOwner},
         );
-        const response2 = try context.client.rest(
-            try std.mem.concat(
-                context.arena.allocator(),
-                u8,
-                &.{
-                    "https://api.github.com/repos/",
-                    raw_repo.nameWithOwner,
-                    "/traffic/views",
-                },
-            ),
-        );
-        defer context.client.allocator.free(response2.body);
-        if (response2.status == .ok) {
-            repository.views = (try std.json.parseFromSliceLeaky(
-                struct { count: u32 },
-                context.arena.allocator(),
-                response2.body,
-                .{ .ignore_unknown_fields = true },
-            )).count;
-        } else {
-            std.log.info(
-                "Failed to get views for {s} ({?s})",
-                .{ raw_repo.nameWithOwner, response2.status.phrase() },
+        return;
+    }
+    var repository = Repository{
+        .name = try context.allocator.dupe(u8, raw_repo.nameWithOwner),
+        .stars = raw_repo.stargazerCount,
+        .forks = raw_repo.forkCount,
+        .private = raw_repo.isPrivate,
+        .languages = null,
+        .views = 0,
+        .lines_changed = 0,
+    };
+    errdefer repository.deinit(context.allocator);
+    if (raw_repo.languages) |repo_languages| {
+        if (repo_languages.edges) |raw_languages| {
+            repository.languages = try context.allocator.alloc(
+                Language,
+                raw_languages.len,
             );
+            errdefer {
+                context.allocator.free(repository.languages.?);
+                repository.languages = null;
+            }
+            for (
+                raw_languages,
+                repository.languages.?,
+                0..,
+            ) |raw, *language, i| {
+                errdefer {
+                    for (0..i, repository.languages.?) |_, l| {
+                        context.allocator.free(l.name);
+                        if (l.color) |c| context.allocator.free(c);
+                    }
+                }
+                language.* = .{
+                    .name = try context.allocator.dupe(u8, raw.node.name),
+                    .size = raw.size,
+                };
+                errdefer context.allocator.free(language.name);
+                if (raw.node.color) |color| {
+                    language.color = try context.allocator.dupe(u8, color);
+                }
+                errdefer if (language.color) |c| context.allocator.free(c);
+            }
         }
+    }
 
-        _ = try repository.getLinesChanged(
-            context.arena,
-            context.client,
-            context.user,
+    std.log.info(
+        "Getting views for {s}...",
+        .{raw_repo.nameWithOwner},
+    );
+    const response2 = try context.client.rest(
+        try std.mem.concat(
+            context.arena.allocator(),
+            u8,
+            &.{
+                "https://api.github.com/repos/",
+                raw_repo.nameWithOwner,
+                "/traffic/views",
+            },
+        ),
+    );
+    defer context.client.allocator.free(response2.body);
+    if (response2.status == .ok) {
+        repository.views = (try std.json.parseFromSliceLeaky(
+            struct { count: u32 },
+            context.arena.allocator(),
+            response2.body,
+            .{ .ignore_unknown_fields = true },
+        )).count;
+    } else {
+        std.log.info(
+            "Failed to get views for {s} ({?s})",
+            .{ raw_repo.nameWithOwner, response2.status.phrase() },
         );
+    }
 
-        try context.seen.put(raw_repo.nameWithOwner, true);
-        try context.repositories.append(context.allocator, repository);
+    _ = try repository.fetchContributorStatistics(
+        context.arena,
+        context.client,
+        context.user,
+    );
+
+    try context.seen.put(raw_repo.nameWithOwner, true);
+    try context.repositories.append(context.allocator, repository);
+}
+
+fn getPrivateRepositories(context: RepoContext) !void {
+    var cursor: ?[]const u8 = null;
+    while (true) {
+        const response = try context.client.graphql(
+            \\query ($cursor: String) {
+            \\  viewer {
+            \\    repositories(first: 100, after: $cursor, privacy: PRIVATE, ownerAffiliations: OWNER) {
+            \\      pageInfo { hasNextPage endCursor }
+            \\      nodes {
+            \\        nameWithOwner stargazerCount forkCount isPrivate isFork
+            \\        languages(first: 100, orderBy: { direction: DESC, field: SIZE }) {
+            \\          edges { size node { name color } }
+            \\        }
+            \\      }
+            \\    }
+            \\  }
+            \\}
+        , .{ .cursor = cursor });
+        defer context.client.allocator.free(response.body);
+        if (response.status != .ok) return error.RequestFailed;
+        const repos = (try std.json.parseFromSliceLeaky(
+            struct { data: struct { viewer: struct { repositories: struct {
+                pageInfo: struct { hasNextPage: bool, endCursor: ?[]const u8 },
+                nodes: []RawRepository,
+            } } } },
+            context.arena.allocator(),
+            response.body,
+            .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
+        )).data.viewer.repositories;
+        for (repos.nodes) |repo| try addRepository(context, repo);
+        if (!repos.pageInfo.hasNextPage) break;
+        cursor = repos.pageInfo.endCursor orelse return error.MissingCursor;
     }
 }
 
@@ -549,6 +591,16 @@ fn getRepos(
         }, year, 0, 12);
     }
 
+    try getPrivateRepositories(.{
+        .allocator = allocator,
+        .arena = arena,
+        .client = client,
+        .user = info.user,
+        .result = &result,
+        .seen = &seen,
+        .repositories = &repositories,
+    });
+
     result.repositories = try repositories.toOwnedSlice(allocator);
     errdefer {
         for (result.repositories) |repository| {
@@ -611,7 +663,7 @@ fn getLinesChanged(
             });
             try io.sleep(.fromSeconds(delay), .real);
         }
-        switch (try item.repo.getLinesChanged(arena, client, self.user)) {
+        switch (try item.repo.fetchContributorStatistics(arena, client, self.user)) {
             .ok => {},
             // If we're hitting rate limits on this API, just clone the repo
             // locally to compute lines changed
