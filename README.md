@@ -4,15 +4,18 @@ This repository generates GitHub profile statistics with the Zig implementation
 from [jstrieb/github-stats](https://github.com/jstrieb/github-stats). The workflow
 runs daily and can also be started manually.
 
-Only public, non-fork repositories owned by the authenticated user are used for
-repository statistics. As in upstream, the overall contribution counts come from
+Only non-fork repositories owned by the authenticated user are used for
+repository statistics. Public and permitted private repositories are included.
+Private repositories are never cloned; if GitHub does not return contributor
+statistics, their changed-line counts may be incomplete. As in upstream, the overall contribution counts come from
 GitHub's user contribution collection and may include contributions outside
 those repositories. Only repositories with commit contributions are discovered.
 
 ## Setup
 
-1. Create a fine-grained personal access token with access to **public
-   repositories only**. No repository write permissions are needed. Optionally,
+1. Create a fine-grained personal access token with access to the desired
+   repositories and **Metadata: read-only**. No code access or repository write
+   permissions are needed. Optionally,
    grant the account permission **Email addresses: read** to improve attribution
    when contribution statistics are calculated from Git history. Without it,
    GitHub noreply addresses are used as a fallback.

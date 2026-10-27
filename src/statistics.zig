@@ -14,17 +14,16 @@ review_contributions: u32 = 0,
 
 const Statistics = @This();
 
-fn includeRepository(name: []const u8, user: []const u8, private: bool, fork: bool) bool {
+fn includeRepository(name: []const u8, user: []const u8, fork: bool) bool {
     const separator = std.mem.indexOfScalar(u8, name, '/') orelse return false;
-    return !private and !fork and std.ascii.eqlIgnoreCase(name[0..separator], user);
+    return !fork and std.ascii.eqlIgnoreCase(name[0..separator], user);
 }
 
-test "only own public repositories that are not forks are included" {
-    try std.testing.expect(includeRepository("Alice/project", "alice", false, false));
-    try std.testing.expect(!includeRepository("Alice/private", "alice", true, false));
-    try std.testing.expect(!includeRepository("Alice/fork", "alice", false, true));
-    try std.testing.expect(!includeRepository("Bob/project", "alice", false, false));
-    try std.testing.expect(!includeRepository("alice", "alice", false, false));
+test "only own repositories that are not forks are included" {
+    try std.testing.expect(includeRepository("Alice/project", "alice", false));
+    try std.testing.expect(!includeRepository("Alice/fork", "alice", true));
+    try std.testing.expect(!includeRepository("Bob/project", "alice", false));
+    try std.testing.expect(!includeRepository("alice", "alice", false));
 }
 
 const Repository = struct {
@@ -394,8 +393,8 @@ fn getReposByYear(
 
     for (stats.commitContributionsByRepository) |x| {
         const raw_repo = x.repository;
-        // Only collect statistics for the user's own public, non-fork repos.
-        if (!includeRepository(raw_repo.nameWithOwner, context.user, raw_repo.isPrivate, raw_repo.isFork)) continue;
+        // Only collect statistics for the user's own non-fork repositories.
+        if (!includeRepository(raw_repo.nameWithOwner, context.user, raw_repo.isFork)) continue;
         if (context.seen.get(raw_repo.nameWithOwner) orelse false) {
             std.log.debug(
                 "Skipping {s} (seen)",
@@ -629,6 +628,8 @@ fn getLinesChanged(
                     if (item.retries <= max) {
                         try q.push(allocator, item);
                     } else {
+                        // Never fetch private repository content for statistics.
+                        if (item.repo.private) continue;
                         std.log.info(
                             "Cloning {s} to get lines changed...",
                             .{item.repo.name},
