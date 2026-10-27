@@ -30,7 +30,7 @@ jobs:
         run: ./zig-out/bin/github-stats
         env:
           ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
-          EXCLUDE_REPOS: ${{ secrets.EXCLUDED }}
+          EXCLUDE_REPOS: ${{ format('{0},e-feit/github-stats', secrets.EXCLUDED) }}
           EXCLUDE_LANGS: ${{ secrets.EXCLUDED_LANGS }}
           OVERVIEW_OUTPUT_FILE: generated/overview.svg
           LANGUAGES_OUTPUT_FILE: generated/languages.svg
